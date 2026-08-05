@@ -1,0 +1,99 @@
+# =============================================================================
+# Atari DQN Benchmark — Central Hyperparameter Configuration
+# =============================================================================
+# All training flags, network settings, and I/O paths live here.
+# Command-line arguments in train.py can override any value at runtime.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+env_id: "ALE/DonkeyKong-v5"        # Any ALE/gymnasium Atari environment ID
+n_envs: 8                          # Parallel environments, run via SubprocVecEnv
+                                   # (one OS process each). Tuned for a ~12-core CPU:
+                                   # keeps the GPU fed with fresh transitions instead
+                                   # of stalling on single-env stepping. buffer_size
+                                   # below has been sized to still hold a large window
+                                   # of history even at this collection rate.
+frame_stack: 4                    # Consecutive frames stacked as one observation
+seed: 42                          # Global random seed for reproducibility
+
+# ---------------------------------------------------------------------------
+# Core Hyperparameters  (DeepMind Nature DQN defaults as baseline)
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Optimizer
+# ---------------------------------------------------------------------------
+# Choices and their recommended learning rates:
+#
+#   adam    — Adaptive moment estimation. Robust default for DQN.
+#               Typical LR: 1e-4 – 2.5e-4
+#
+#   adamw   — Adam with decoupled weight decay. Slightly better regularisation.
+#               Typical LR: 1e-4 – 2.5e-4
+#
+#   rmsprop — Used in the original DeepMind Nature DQN paper.
+#               Typical LR: 2.5e-4 – 1e-3
+#
+#   sgd     — Vanilla SGD with momentum. Rarely used for DQN; needs careful tuning.
+#               Typical LR: 1e-3 – 1e-2
+#
+# optimizer_kwargs overrides or extends the built-in defaults for the chosen
+# optimizer (e.g. eps, alpha, momentum, weight_decay).
+optimizer: "rmsprop"
+optimizer_kwargs: {eps : 1.5e-4}              # e.g. {eps: 1.5e-4} to override Adam eps
+
+learning_rate: 2.5e-4             # Learning rate passed to the optimizer
+batch_size: 128                    # Mini-batch size drawn from replay buffer.
+                                   # Bumped from 32 → 128: a GTX 1650 barely notices
+                                   # the extra compute for a small NatureCNN, so a
+                                   # bigger batch means more GPU work per gradient
+                                   # step instead of leaving it idle between updates.
+buffer_size: 200000                # Replay buffer capacity. Paired with
+                                   # optimize_memory_usage=True (agent.py) this stores
+                                   # obs once instead of duplicating obs/next_obs, so
+                                   # 200k transitions costs ~5.6 GB in ONE contiguous
+                                   # array. Windows must commit that whole block up
+                                   # front (no lazy overcommit like Linux), and each of
+                                   # the 8 SubprocVecEnv workers also loads a full
+                                   # torch/gymnasium/ALE stack (~0.5-1 GB each) before
+                                   # the buffer is even created. 400k (~10.5 GB) reliably
+                                   # failed with an ArrayMemoryError under that combined
+                                   # load — if you still hit an allocation error, lower
+                                   # this further (e.g. 100000) or reduce n_envs.
+optimize_memory_usage: true        # Halves replay-buffer RAM by storing next_obs as
+                                   # a view into the obs ring buffer. Required to make
+                                   # buffer_size above fit in 16 GB of RAM.
+gamma: 0.995                        # Discount factor γ (standard Atari value; 0.999 is
+                                   # too high and causes training instability)
+tau: 0.8                          # Target-network update coefficient (1.0 = hard copy)
+target_update_interval: 1000      # Steps between target-network syncs
+train_freq: 1                     # Gradient update after every VecEnv.step() call,
+                                   # i.e. every n_envs (=8) collected transitions
+gradient_steps: 4                 # Gradient updates executed per train() call.
+                                   # With n_envs=8: 4 updates / 8 transitions = 0.5
+                                   # update ratio, double the original single-env
+                                   # 1 update / 4 transitions = 0.25 ratio, so the GPU
+                                   # does proportionally more work as data arrives faster.
+learning_starts: 50000            # Random-play warm-up steps before first update
+max_grad_norm: 10.0               # Gradient clipping threshold
+
+# ---------------------------------------------------------------------------
+# Exploration Schedule  (linear ε-greedy annealing)
+# ---------------------------------------------------------------------------
+exploration_fraction: 0.35        # Decay ε over the first 15% of steps
+exploration_initial_eps: 1.0      # Starting ε (fully random)
+exploration_final_eps: 0.08       # Final ε (nearly greedy)
+
+# ---------------------------------------------------------------------------
+# Training Budget
+# ---------------------------------------------------------------------------
+total_timesteps: 5000000           # 1 million steps — ~1 h per algorithm on GTX 1650
+checkpoint_interval: 100000        # Save model weights every 50k steps
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+log_dir: "logs"                   # TensorBoard root  → logs/<env>/<algo>_<hparams>/
+checkpoint_dir: "checkpoints"     # Checkpoint root   → checkpoints/<env>/<algo>/
+video_dir: "videos"               # Evaluation video recordings

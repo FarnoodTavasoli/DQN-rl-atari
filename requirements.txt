@@ -1,0 +1,35 @@
+# =============================================================================
+# Atari DQN Benchmark — Python Dependencies
+# =============================================================================
+# Install with:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+# =============================================================================
+
+# Core deep learning
+# torch         -- install manually with CUDA (see above)
+torchvision                     # Needed by some SB3 internals
+
+# Reinforcement learning framework
+stable-baselines3               # SB3 with gymnasium support
+
+# Atari environments
+gymnasium                       # Base gymnasium
+gymnasium[atari]                # ALE Atari plugin
+ale-py                          # Arcade Learning Environment backend
+
+# Configuration & utilities
+pyyaml
+numpy
+
+# Logging & visualisation
+tensorboard                     # TensorBoard training curves
+
+# Image processing (required by SB3's WarpFrame wrapper)
+opencv-python
+
+# Progress display
+tqdm
+
+# Video recording (optional, used by evaluate.py --record_video)
+moviepy
