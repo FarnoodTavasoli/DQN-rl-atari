@@ -1,0 +1,6 @@
+**__pycache__**
+logs/
+checkpoints/
+.venv/
+videos/
+training.log

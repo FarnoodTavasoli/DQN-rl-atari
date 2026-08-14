@@ -14,6 +14,10 @@ Preprocessing stages applied (in order):
                           training (helps value estimation).  Disabled at eval.
   4. FireResetEnv      — Automatically press FIRE on reset for games that require
                           it to start (e.g. Breakout).
+  4b.ForceFireOnLifeLoss — Force FIRE for a short number of steps after every
+                          life loss (and on reset).  Training bootstrap only;
+                          ensures the ball is launched so the agent can learn
+                          from real rallies.  Disabled at eval.
   5. WarpFrame         — Convert to grayscale and resize to 84 × 84 pixels.
   6. ClipRewardEnv     — Clip rewards to {-1, 0, +1} via np.sign for training
                           stability across different score scales. Disabled at eval.
@@ -88,6 +92,70 @@ from stable_baselines3.common.vec_env import (
     VecFrameStack,
     VecTransposeImage,
 )
+
+
+# ---------------------------------------------------------------------------
+# Force FIRE after life loss (training bootstrap)
+# ---------------------------------------------------------------------------
+
+
+class ForceFireOnLifeLoss(gym.Wrapper):
+    """
+    Force the FIRE action for a short number of steps after every life loss
+    and after a true environment reset.
+
+    Rationale
+    ---------
+    ``FireResetEnv`` only injects FIRE on a full ``reset()``.  After an
+    intermediate life loss handled by ``EpisodicLifeEnv`` the ball sits on
+    the paddle and the agent must press FIRE itself.  Many agents fail to
+    discover this action, producing extremely short episodes.  This wrapper
+    guarantees the ball is launched so the agent can experience real
+    rallies and learn paddle control.
+
+    The wrapper is intended for **training only**.  Evaluation environments
+    should remain free of forced actions.
+    """
+
+    def __init__(self, env: gym.Env, force_steps: int = 1):
+        super().__init__(env)
+        self.force_steps = max(int(force_steps), 0)
+        self._remaining = 0
+        self._prev_lives: int | None = None
+
+        # Resolve the FIRE action index from the underlying ALE action set.
+        meanings = env.unwrapped.get_action_meanings()  # type: ignore[union-attr]
+        if "FIRE" in meanings:
+            self.fire_action = meanings.index("FIRE")
+        else:
+            # Fallback for the minimal Breakout action set.
+            self.fire_action = 1
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._remaining = self.force_steps
+        # Initialise life counter from info if available.
+        lives = info.get("lives", info.get("ale.lives"))
+        self._prev_lives = int(lives) if lives is not None else None
+        return obs, info
+
+    def step(self, action):
+        if self._remaining > 0:
+            action = self.fire_action
+            self._remaining -= 1
+
+        obs, reward, terminated, truncated, info = self.env.step(action)
+
+        # Detect intermediate life loss (lives decreased but game not over).
+        lives = info.get("lives", info.get("ale.lives"))
+        if lives is not None:
+            lives = int(lives)
+            if self._prev_lives is not None and lives < self._prev_lives and lives > 0:
+                self._remaining = self.force_steps
+            self._prev_lives = lives
+
+        return obs, reward, terminated, truncated, info
+
 
 # ---------------------------------------------------------------------------
 # Training environment
@@ -166,6 +234,11 @@ def make_atari_env(
             # where the ball auto-launches, or DK where FIRE means jump).
             if fire_on_reset:
                 env = FireResetEnv(env)
+            # Stage 4b — force FIRE after every life loss (and on reset).
+            # Guarantees the ball is launched so the agent can learn from
+            # real rallies.  Training only; evaluation is left unchanged.
+            if fire_on_reset:
+                env = ForceFireOnLifeLoss(env, force_steps=1)
             # Stage 5 — grayscale + resize to 84 × 84
             env = WarpFrame(env)
             # Stage 6 — clip rewards to {-1, 0, +1}
