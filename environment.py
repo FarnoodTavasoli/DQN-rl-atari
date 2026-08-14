@@ -237,8 +237,10 @@ def make_atari_env(
             # Stage 4b — force FIRE after every life loss (and on reset).
             # Guarantees the ball is launched so the agent can learn from
             # real rallies.  Training only; evaluation is left unchanged.
+            # force_steps=2 gives the ball a short head-start before the
+            # agent takes control, reducing immediate life losses.
             if fire_on_reset:
-                env = ForceFireOnLifeLoss(env, force_steps=1)
+                env = ForceFireOnLifeLoss(env, force_steps=2)
             # Stage 5 — grayscale + resize to 84 × 84
             env = WarpFrame(env)
             # Stage 6 — clip rewards to {-1, 0, +1}

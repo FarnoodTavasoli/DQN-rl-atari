@@ -460,12 +460,42 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         frame_stack=config["frame_stack"],
     )
 
+    # Print the wrapper chain so it is obvious whether ForceFireOnLifeLoss
+    # (and the rest of the DeepMind pipeline) is present.
+    def _wrapper_chain(env) -> str:
+        """Return a human-readable list of wrapper class names."""
+        names = []
+        # VecEnv wrappers (outermost first)
+        cur = env
+        while cur is not None:
+            names.append(type(cur).__name__)
+            # SubprocVecEnv / DummyVecEnv expose .envs; other VecEnv wrappers use .venv
+            if hasattr(cur, "venv"):
+                cur = cur.venv
+            elif hasattr(cur, "envs"):
+                # Dive into the first sub-environment's Gymnasium wrapper stack
+                sub = cur.envs[0]
+                while sub is not None:
+                    names.append(type(sub).__name__)
+                    sub = getattr(sub, "env", None)
+                break
+            else:
+                break
+        return " → ".join(names)
+
+    print(f"Training env wrapper chain:\n  {_wrapper_chain(train_env)}")
+    if "ForceFireOnLifeLoss" in _wrapper_chain(train_env):
+        print("  ✓ ForceFireOnLifeLoss is active")
+    else:
+        print("  ✗ ForceFireOnLifeLoss NOT found — check environment.py")
+
     print("Building evaluation environment …")
     eval_env = make_eval_env(
         env_id=config["env_id"],
         seed=config["seed"] + 100,  # Different seed from training
         frame_stack=config["frame_stack"],
     )
+    print(f"Eval env wrapper chain:\n  {_wrapper_chain(eval_env)}")
 
     # ---- Config snapshot ---------------------------------------------------
     # Write before the agent is built so the file exists even if training
