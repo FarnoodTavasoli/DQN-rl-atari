@@ -49,6 +49,7 @@ import torch.nn.functional as F
 from gymnasium import spaces
 from stable_baselines3 import DQN
 from stable_baselines3.common.type_aliases import GymEnv
+from stable_baselines3.common.utils import get_linear_fn
 from stable_baselines3.dqn.policies import CnnPolicy, QNetwork
 from torch import nn
 
@@ -501,11 +502,25 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         effective_exploration_fraction = config["exploration_fraction"]
         effective_learning_starts = config["learning_starts"]
 
+
+    # --- Learning-rate schedule ---------------------------------------------
+    # A constant LR for the full 20M-step run leaves nothing to damp late-
+    # training oscillation (visible as persistent, non-decaying spikes in
+    # train/loss and train/mean_td_error). Annealing to 10% of the base LR
+    # gives smaller, more conservative updates once the policy is already
+    # good, instead of continuing full-sized steps that can knock a good
+    # policy into a worse basin near the end of training.
+    base_lr = config["learning_rate"]
+    if config.get("lr_schedule", "constant") == "linear":
+        learning_rate = get_linear_fn(base_lr, base_lr * 0.1, 1.0)
+    else:
+        learning_rate = base_lr
+
     agent = AlgorithmClass(
         policy=policy_arg,
         env=env,
         policy_kwargs=policy_kwargs,
-        learning_rate=config["learning_rate"],
+        learning_rate=learning_rate,
         batch_size=config["batch_size"],
         buffer_size=config["buffer_size"],
         gamma=config["gamma"],

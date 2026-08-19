@@ -544,7 +544,7 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         verbose=1,
     )
 
-    # 2. Evaluation: run 5 deterministic episodes every 50 k steps and log
+    # 2. Evaluation: run N deterministic episodes every checkpoint_interval steps and log
     #    mean_reward to TensorBoard.  Best model is saved automatically.
     best_model_path = str(checkpoint_dir / f"{algo}_best")
     eval_cb = EvalCallback(
@@ -552,7 +552,7 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         best_model_save_path=best_model_path,
         log_path=str(checkpoint_dir / "eval_logs"),
         eval_freq=max(50_000 // config["n_envs"], 1),
-        n_eval_episodes=5,
+        n_eval_episodes=20,
         deterministic=True,
         render=False,
         verbose=1,

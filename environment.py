@@ -13,11 +13,8 @@ Preprocessing stages applied (in order):
   3. EpisodicLifeEnv   — Signal episode termination on every life loss during
                           training (helps value estimation).  Disabled at eval.
   4. FireResetEnv      — Automatically press FIRE on reset for games that require
-                          it to start (e.g. Breakout).
-  4b.ForceFireOnLifeLoss — Force FIRE for a short number of steps after every
-                          life loss (and on reset).  Training bootstrap only;
-                          ensures the ball is launched so the agent can learn
-                          from real rallies.  Disabled at eval.
+                          it to start (e.g. Breakout).  Not applied after
+                          intermediate life losses (agent must learn FIRE).
   5. WarpFrame         — Convert to grayscale and resize to 84 × 84 pixels.
   6. ClipRewardEnv     — Clip rewards to {-1, 0, +1} via np.sign for training
                           stability across different score scales. Disabled at eval.
@@ -45,34 +42,58 @@ gym.register_envs(ale_py)  # register ALE/Atari environments
 # ---------------------------------------------------------------------------
 
 
+# Games where FIRE is required to start play (ball/paddle frozen until FIRE).
+# Do NOT include games where FIRE is a normal gameplay action (jump, shoot
+# while moving, etc.) — e.g. DonkeyKong, MontezumaRevenge, PrivateEye.
+_FIRE_START_GAMES = {
+    "breakout",
+    "spaceinvaders",
+    "demonattack",
+    "namethisgame",
+    "starhunter",
+    "video_pinball",
+    "videopinball",
+    "beamrider",
+    "phoenix",
+    "assault",
+}
+
+
 def _detect_fire_needed(env: gym.Env) -> bool:
     """
     Return True only if FIRE must be pressed after reset to begin play.
 
-    Strategy: compare the raw pixel observation immediately after reset
-    with the observation after a single NOOP step.
+    Primary rule: the environment id must belong to the known set of games
+    that hold the ball / ship until FIRE is pressed (Breakout, Space
+    Invaders, …).  A secondary pixel-based check is still performed as a
+    safety net for those games.
 
-    * If they are **identical**, the ROM is frozen — no game element moved
-      without player input.  Since FIRE is in the action set we conclude
-      it is the start trigger (e.g. Breakout holds the ball on the paddle
-      until FIRE is pressed).
-
-    * If the observation **changes** on NOOP the game is already advancing
-      on its own (e.g. Pong auto-launches the ball after reset), so
-      FireResetEnv is not needed and should be skipped to avoid pressing
-      an unintended FIRE action at each episode boundary.
-
-    The detection is run on the unwrapped base environment before any
-    preprocessing wrappers are applied, so it sees the raw RGB pixels
-    and is not affected by grayscale conversion or frame stacking.
+    Games such as Donkey Kong are deliberately excluded: in those titles
+    FIRE means jump (or an equivalent gameplay action) and must never be
+    forced on reset or after a life loss.
     """
+    # Resolve a short, lower-case game name from the Gymnasium id.
+    # e.g. "ALE/Breakout-v5" → "breakout", "ALE/DonkeyKong-v5" → "donkeykong"
+    env_id = getattr(env, "spec", None)
+    env_id = env_id.id if env_id is not None else str(env)
+    game = (
+        env_id.split("/")[-1]          # strip "ALE/"
+        .split("-")[0]                 # strip "-v5"
+        .lower()
+        .replace("_", "")
+    )
+
+    if game not in _FIRE_START_GAMES:
+        return False
+
     if "FIRE" not in env.unwrapped.get_action_meanings():  # type: ignore[union-attr]
         return False
+
+    # Secondary pixel check (same logic as before) for the whitelisted games.
     obs_reset, _ = env.reset()
     obs_noop, _, terminated, truncated, _ = env.step(0)  # one NOOP step
-    env.reset()  # restore clean state before any wrappers are applied
+    env.reset()  # restore clean state
     if terminated or truncated:
-        # Immediate termination on NOOP — uncommon, but treat as needs-FIRE.
         return True
     return bool(np.array_equal(obs_reset, obs_noop))
 
@@ -213,15 +234,19 @@ def make_atari_env(
     # Probe a temporary environment once to determine whether FireResetEnv
     # should be applied.  Running this outside the per-env closure means the
     # check executes only once regardless of n_envs.
-    _probe = gym.make(env_id, render_mode="rgb_array")
+    _probe = gym.make(env_id, render_mode="rgb_array", frameskip=1)
     fire_on_reset: bool = _detect_fire_needed(_probe)
     _probe.close()
+    if fire_on_reset:
+        print(f"  FIRE-start game detected → FireResetEnv enabled")
+    else:
+        print(f"  FIRE is a gameplay action (or not required) → FireReset skipped")
 
     def _make_single_env(rank: int):
         """Factory closure for a single sub-environment."""
 
         def _init() -> gym.Env:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(env_id, render_mode="rgb_array", frameskip=1)
 
             # Stage 1 — random no-ops at episode start
             env = NoopResetEnv(env, noop_max=30)
@@ -232,15 +257,11 @@ def make_atari_env(
             # Stage 4 — press FIRE only for games that require it to start
             # (detected via _detect_fire_needed; skipped for games like Pong
             # where the ball auto-launches, or DK where FIRE means jump).
+            # NOTE: Do NOT force FIRE inside step() after life loss. Replacing
+            # the action in the wrapper while SB3 stores the policy's action
+            # corrupts the replay buffer and can destroy learning.
             if fire_on_reset:
                 env = FireResetEnv(env)
-            # Stage 4b — force FIRE after every life loss (and on reset).
-            # Guarantees the ball is launched so the agent can learn from
-            # real rallies.  Training only; evaluation is left unchanged.
-            # force_steps=2 gives the ball a short head-start before the
-            # agent takes control, reducing immediate life losses.
-            if fire_on_reset:
-                env = ForceFireOnLifeLoss(env, force_steps=2)
             # Stage 5 — grayscale + resize to 84 × 84
             env = WarpFrame(env)
             # Stage 6 — clip rewards to {-1, 0, +1}
@@ -310,12 +331,16 @@ def make_eval_env(
     """
 
     # Use the same fire-reset detection as the training env for consistency.
-    _probe = gym.make(env_id, render_mode="rgb_array")
+    _probe = gym.make(env_id, render_mode="rgb_array", frameskip=1)
     fire_on_reset: bool = _detect_fire_needed(_probe)
     _probe.close()
+    if fire_on_reset:
+        print(f"  Eval: FireResetEnv enabled")
+    else:
+        print(f"  Eval: FireResetEnv skipped")
 
     def _init() -> gym.Env:
-        env = gym.make(env_id, render_mode=render_mode)
+        env = gym.make(env_id, render_mode=render_mode,frameskip=1)
 
         env = NoopResetEnv(env, noop_max=30)
         env = MaxAndSkipEnv(env, skip=4)

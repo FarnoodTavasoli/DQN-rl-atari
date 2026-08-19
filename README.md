@@ -226,7 +226,7 @@ python evaluate.py \
 python evaluate.py --model_path checkpoints\ALE-Pong-v5\DQN\DQN_best\best_model.zip --algorithm DQN --env_id ALE/Pong-v5 --record_video --video_dir videos/DQN --n_episodes 1 
 
 # DoubleDQN
-python evaluate.py --model_path checkpoints\ALE-DonkeyKong-v5\DoubleDQN\DoubleDQN_final.zip --algorithm DoubleDQN --env_id ALE/DonkeyKong-v5 --record_video --video_dir videos/DoubleDQN --n_episodes 10
+python evaluate.py --model_path checkpoints/ALE-Breakout-v5/DoubleDQN/001/DoubleDQN_final.zip --algorithm DoubleDQN --env_id ALE/DonkeyKong-v5 --record_video --video_dir videos/DoubleDQN --n_episodes 6
 
 # DuelingDQN
 python evaluate.py --model_path checkpoints\ALE-DonkeyKong-v5\DuelingDQN\001\DuelingDQN_step_3200000_steps.zip --algorithm DuelingDQN --env_id ALE/DonkeyKong-v5 --record_video --video_dir videos/DuelingDQN --n_episodes 5

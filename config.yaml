@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-env_id: "ALE/DonkeyKong-v5"        # Any ALE/gymnasium Atari environment ID
+env_id: "ALE/Breakout-v5"        # Any ALE/gymnasium Atari environment ID
 n_envs: 8                          # Parallel environments, run via SubprocVecEnv
                                    # (one OS process each). Tuned for a ~12-core CPU:
                                    # keeps the GPU fed with fresh transitions instead
@@ -40,16 +40,19 @@ seed: 42                          # Global random seed for reproducibility
 #
 # optimizer_kwargs overrides or extends the built-in defaults for the chosen
 # optimizer (e.g. eps, alpha, momentum, weight_decay).
-optimizer: "rmsprop"
+optimizer: "adam"
 optimizer_kwargs: {eps : 1.5e-4}              # e.g. {eps: 1.5e-4} to override Adam eps
 
+
+lr_schedule: "linear"             # "linear" anneals learning_rate → 10% of itself over training;
+                                  # "constant" keeps the old flat-LR behavior
 learning_rate: 2.5e-4             # Learning rate passed to the optimizer
-batch_size: 128                    # Mini-batch size drawn from replay buffer.
+batch_size: 32                    # Mini-batch size drawn from replay buffer.
                                    # Bumped from 32 → 128: a GTX 1650 barely notices
                                    # the extra compute for a small NatureCNN, so a
                                    # bigger batch means more GPU work per gradient
                                    # step instead of leaving it idle between updates.
-buffer_size: 200000                # Replay buffer capacity. Paired with
+buffer_size: 1000000                # Replay buffer capacity. Paired with
                                    # optimize_memory_usage=True (agent.py) this stores
                                    # obs once instead of duplicating obs/next_obs, so
                                    # 200k transitions costs ~5.6 GB in ONE contiguous
@@ -64,13 +67,13 @@ buffer_size: 200000                # Replay buffer capacity. Paired with
 optimize_memory_usage: true        # Halves replay-buffer RAM by storing next_obs as
                                    # a view into the obs ring buffer. Required to make
                                    # buffer_size above fit in 16 GB of RAM.
-gamma: 0.995                        # Discount factor γ (standard Atari value; 0.999 is
+gamma: 0.99                        # Discount factor γ (standard Atari value; 0.999 is
                                    # too high and causes training instability)
-tau: 0.8                          # Target-network update coefficient (1.0 = hard copy)
-target_update_interval: 1000      # Steps between target-network syncs
-train_freq: 1                     # Gradient update after every VecEnv.step() call,
+tau: 1.0                          # Target-network update coefficient (1.0 = hard copy)
+target_update_interval: 10000      # Steps between target-network syncs
+train_freq: 4                     # Gradient update after every VecEnv.step() call,
                                    # i.e. every n_envs (=8) collected transitions
-gradient_steps: 4                 # Gradient updates executed per train() call.
+gradient_steps: 1                 # Gradient updates executed per train() call.
                                    # With n_envs=8: 4 updates / 8 transitions = 0.5
                                    # update ratio, double the original single-env
                                    # 1 update / 4 transitions = 0.25 ratio, so the GPU
@@ -81,15 +84,15 @@ max_grad_norm: 10.0               # Gradient clipping threshold
 # ---------------------------------------------------------------------------
 # Exploration Schedule  (linear ε-greedy annealing)
 # ---------------------------------------------------------------------------
-exploration_fraction: 0.35        # Decay ε over the first 15% of steps
+exploration_fraction: 0.1        # Decay ε over the first 15% of steps
 exploration_initial_eps: 1.0      # Starting ε (fully random)
-exploration_final_eps: 0.08       # Final ε (nearly greedy)
+exploration_final_eps: 0.01       # Final ε (nearly greedy)
 
 # ---------------------------------------------------------------------------
 # Training Budget
 # ---------------------------------------------------------------------------
-total_timesteps: 5000000           # 1 million steps — ~1 h per algorithm on GTX 1650
-checkpoint_interval: 100000        # Save model weights every 50k steps
+total_timesteps: 15000000           # 1 million steps — ~1 h per algorithm on GTX 1650
+checkpoint_interval: 1000000        # Save model weights every 50k steps
 
 # ---------------------------------------------------------------------------
 # Paths
