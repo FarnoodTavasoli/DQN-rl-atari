@@ -551,8 +551,8 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         eval_env=eval_env,
         best_model_save_path=best_model_path,
         log_path=str(checkpoint_dir / "eval_logs"),
-        eval_freq=max(50_000 // config["n_envs"], 1),
-        n_eval_episodes=20,
+        eval_freq=max(200_000 // config["n_envs"], 1),
+        n_eval_episodes=15,
         deterministic=True,
         render=False,
         verbose=1,
@@ -636,12 +636,31 @@ if __name__ == "__main__":
     print(f"Algorithms to train: {', '.join(algorithms)}\n")
 
     # 5. Train each algorithm in sequence with the same config.
+    #TODO: profiler just in case
     for i, algo in enumerate(algorithms, 1):
         print(f"\n{'#' * 60}")
         print(f"#  [{i}/{len(algorithms)}] Starting: {algo}")
         print(f"{'#' * 60}\n")
         algo_config = {**config, "algorithm": algo}
         train(algo_config, resume_path=args.resume)
+    # import cProfile
+    # import pstats
+
+    # for i, algo in enumerate(algorithms, 1):
+    #     print(f"\n{'#' * 60}")
+    #     print(f"#  [{i}/{len(algorithms)}] Starting: {algo}")
+    #     print(f"{'#' * 60}\n")
+    #     algo_config = {**config, "algorithm": algo}
+
+    #     profiler = cProfile.Profile()
+    #     profiler.enable()
+    #     try:
+    #         train(algo_config, resume_path=args.resume)
+    #     finally:
+    #         profiler.disable()
+    #         profiler.dump_stats("profile.out")
+    #         pstats.Stats(profiler).sort_stats("cumulative").print_stats(20)
+
         # Force memory release between runs on memory-constrained systems.
         gc.collect()
         if torch.cuda.is_available():

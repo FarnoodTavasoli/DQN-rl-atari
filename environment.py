@@ -33,6 +33,8 @@ from __future__ import annotations
 import ale_py
 import gymnasium as gym
 import numpy as np
+from gymnasium.wrappers import TimeLimit
+
 
 gym.register_envs(ale_py)  # register ALE/Atari environments
 
@@ -330,6 +332,7 @@ def make_eval_env(
         A single wrapped evaluation environment.
     """
 
+
     # Use the same fire-reset detection as the training env for consistency.
     _probe = gym.make(env_id, render_mode="rgb_array", frameskip=1)
     fire_on_reset: bool = _detect_fire_needed(_probe)
@@ -348,6 +351,11 @@ def make_eval_env(
         if fire_on_reset:
             env = FireResetEnv(env)
         env = WarpFrame(env)
+
+        env = TimeLimit(env, max_episode_steps=15_000)  # cap eval episodes so a
+                                                       # coasting policy doesn't
+                                                       # burn the full ~27k-step cap
+
         # NOTE: ClipRewardEnv intentionally omitted — raw scores for reporting.
         env = Monitor(env)
         # Seed after all wrappers so the RNG state is set on the full chain.

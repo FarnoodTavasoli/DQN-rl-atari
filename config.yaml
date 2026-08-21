@@ -9,7 +9,7 @@
 # Environment
 # ---------------------------------------------------------------------------
 env_id: "ALE/Breakout-v5"        # Any ALE/gymnasium Atari environment ID
-n_envs: 8                          # Parallel environments, run via SubprocVecEnv
+n_envs: 16                         # Parallel environments, run via SubprocVecEnv
                                    # (one OS process each). Tuned for a ~12-core CPU:
                                    # keeps the GPU fed with fresh transitions instead
                                    # of stalling on single-env stepping. buffer_size
@@ -64,7 +64,7 @@ buffer_size: 1000000                # Replay buffer capacity. Paired with
                                    # failed with an ArrayMemoryError under that combined
                                    # load — if you still hit an allocation error, lower
                                    # this further (e.g. 100000) or reduce n_envs.
-optimize_memory_usage: true        # Halves replay-buffer RAM by storing next_obs as
+optimize_memory_usage: false        # Halves replay-buffer RAM by storing next_obs as
                                    # a view into the obs ring buffer. Required to make
                                    # buffer_size above fit in 16 GB of RAM.
 gamma: 0.99                        # Discount factor γ (standard Atari value; 0.999 is
