@@ -179,6 +179,27 @@ class ForceFireOnLifeLoss(gym.Wrapper):
 
         return obs, reward, terminated, truncated, info
 
+# ---------------------------------------------------------------------------
+# Reward clipping
+# ---------------------------------------------------------------------------
+from typing import SupportsFloat
+
+class ScaledLogRewardEnv(gym.RewardWrapper):
+    """
+    Preserves relative reward magnitude while bounding variance, unlike
+    ClipRewardEnv's sign()-only clipping. Games like Riverraid award very
+    different point values for different targets (fuel depots vs.
+    helicopters vs. tankers); sign-clipping makes them all look identical
+    to the network, removing any incentive to conserve depots for later
+    refueling instead of shooting every one on sight.
+    """
+    def __init__(self, env: gym.Env, scale: float = 20.0):
+        super().__init__(env)
+        self.scale = scale
+
+    def reward(self, reward: SupportsFloat) -> SupportsFloat:
+        r = float(reward)
+        return float(np.sign(r) * np.log1p(abs(r) / self.scale))
 
 # ---------------------------------------------------------------------------
 # Training environment
@@ -190,6 +211,7 @@ def make_atari_env(
     n_envs: int = 1,
     seed: int = 42,
     frame_stack: int = 4,
+    reward_clip_mode: str = "sign",   # NEW: "sign" | "scaled_log" | "none"
 ) -> VecTransposeImage:
     """
     Build a vectorised, frame-stacked Atari training environment.
@@ -266,8 +288,12 @@ def make_atari_env(
                 env = FireResetEnv(env)
             # Stage 5 — grayscale + resize to 84 × 84
             env = WarpFrame(env)
-            # Stage 6 — clip rewards to {-1, 0, +1}
-            env = ClipRewardEnv(env)
+            # Stage 6 — clip rewards to sign = {-1, 0, +1}
+            if reward_clip_mode == "sign":
+                env = ClipRewardEnv(env)
+            elif reward_clip_mode == "scaled_log":
+                env = ScaledLogRewardEnv(env)
+            # "none": leave raw rewards untouched
             # Monitor tracks episodic reward and length for TensorBoard
             env = Monitor(env)
             # Seed the fully-wrapped env so NoopResetEnv's RNG is seeded

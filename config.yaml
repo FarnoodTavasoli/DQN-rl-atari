@@ -42,7 +42,7 @@ seed: 42                          # Global random seed for reproducibility
 # optimizer (e.g. eps, alpha, momentum, weight_decay).
 optimizer: "adam"
 optimizer_kwargs: {eps : 1.5e-4}              # e.g. {eps: 1.5e-4} to override Adam eps
-
+reward_clip_mode: "scaled_log"    # "sign" (original clip) | "scaled_log" | "none"
 
 lr_schedule: "linear"             # "linear" anneals learning_rate → 10% of itself over training;
                                   # "constant" keeps the old flat-LR behavior

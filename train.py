@@ -458,6 +458,7 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         n_envs=config["n_envs"],
         seed=config["seed"],
         frame_stack=config["frame_stack"],
+        reward_clip_mode=config["reward_clip_mode"],
     )
 
     # Print the wrapper chain so it is obvious whether ForceFireOnLifeLoss
