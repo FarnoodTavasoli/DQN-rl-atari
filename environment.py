@@ -350,6 +350,7 @@ def make_eval_env(
         # NOTE: EpisodicLifeEnv intentionally omitted — full lives for scoring.
         if fire_on_reset:
             env = FireResetEnv(env)
+            env = ForceFireOnLifeLoss(env, force_steps=1)
         env = WarpFrame(env)
 
         env = TimeLimit(env, max_episode_steps=15_000)  # cap eval episodes so a
