@@ -41,7 +41,7 @@ Architecture notes
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional,Tuple, Type, Union
 
 import numpy as np
 import torch as th
@@ -191,11 +191,114 @@ class DuelingCnnPolicy(CnnPolicy):
 
 
 # =============================================================================
+# Persistent ("sticky") Exploration
+# =============================================================================
+
+
+class PersistentExplorationMixin:
+    """
+    Replaces SB3's per-step-independent epsilon-greedy sampling with
+    temporally persistent random actions during exploration.
+
+    SB3's default draws a *fresh* random action every single timestep
+    whenever the exploration coin says "explore". Discovering a behaviour
+    that requires *holding* an action (or consistent sequence) for several
+    consecutive steps -- climbing a ladder in DonkeyKong, holding a lane
+    through a fork in Riverraid -- has probability that collapses
+    exponentially with the required sequence length under independent
+    per-step resampling. This mixin draws a random action *and* a hold
+    duration; the same action repeats for that many consecutive
+    exploratory steps (per env) before a new one is drawn. Exploited
+    (greedy, Q-network) actions are never touched.
+
+    Only exploration changes -- no reward shaping, no architecture change,
+    no game-specific logic -- so this is safe to enable uniformly across
+    every game.
+
+    Parameters
+    ----------
+    persistence_mean : float
+        Mean number of consecutive exploratory steps a freshly-drawn random
+        action is held for (per env), drawn from Geometric(1/persistence_mean)
+        each time a hold expires. 1.0 (default) exactly reproduces SB3's
+        original per-step-independent behaviour, since Geometric(p=1)
+        always returns 1.
+    """
+
+    def __init__(self, *args: Any, persistence_mean: float = 1.0, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if not isinstance(self.action_space, spaces.Discrete):
+            raise TypeError(
+                "PersistentExplorationMixin only supports Discrete action "
+                f"spaces (Atari); got {type(self.action_space).__name__}."
+            )
+        self.persistence_mean = max(float(persistence_mean), 1.0)
+        self._sticky_action: Optional[np.ndarray] = None
+        self._sticky_remaining: Optional[np.ndarray] = None
+
+    def _excluded_save_params(self) -> List[str]:
+        # Transient per-rollout buffers: exclude from checkpoints so they
+        # don't get pickled mid-episode; they lazily reinitialise on first
+        # use after load/resume. `persistence_mean` itself is NOT excluded,
+        # so it survives save/load/resume like any other hyperparameter.
+        return super()._excluded_save_params() + ["_sticky_action", "_sticky_remaining"]
+
+    def _draw_random_actions(self, n: int) -> np.ndarray:
+        return np.array([self.action_space.sample() for _ in range(n)])
+
+    def _draw_hold_durations(self, n: int) -> np.ndarray:
+        # Geometric(p) on {1, 2, 3, ...}: mean = 1/p  =>  p = 1/persistence_mean
+        return np.random.geometric(1.0 / self.persistence_mean, size=n)
+
+    def _sample_action(
+        self,
+        learning_starts: int,
+        action_noise: Optional[Any] = None,
+        n_envs: int = 1,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if self._sticky_action is None or self._sticky_action.shape[0] != n_envs:
+            self._sticky_action = self._draw_random_actions(n_envs)
+            self._sticky_remaining = self._draw_hold_durations(n_envs)
+
+        # Force a fresh draw for any env that just started a new episode, so
+        # a held action from the previous life/episode never bleeds into a
+        # freshly spawned state.
+        episode_starts = getattr(self, "_last_episode_starts", None)
+        if episode_starts is not None and np.any(episode_starts):
+            self._sticky_remaining[np.asarray(episode_starts, dtype=bool)] = 0
+
+        # One shared draw decides whether this timestep is exploratory for
+        # the whole vectorised batch -- matches SB3's own DQN.predict()
+        # behaviour exactly, so persistence is the only variable changed here.
+        exploring = self.num_timesteps < learning_starts or (
+            np.random.rand() < self.exploration_rate
+        )
+
+        if exploring:
+            expired = self._sticky_remaining <= 0
+            if expired.any():
+                n_expired = int(expired.sum())
+                self._sticky_action[expired] = self._draw_random_actions(n_expired)
+                self._sticky_remaining[expired] = self._draw_hold_durations(n_expired)
+            self._sticky_remaining -= 1
+            unscaled_action = self._sticky_action.copy()
+        else:
+            assert self._last_obs is not None, "self._last_obs was not set"
+            unscaled_action, _ = self.policy.predict(self._last_obs, deterministic=True)
+
+        # Discrete Atari action space only: no scaling/clipping needed.
+        buffer_action = unscaled_action
+        action = buffer_action
+        return action, buffer_action
+
+
+
+# =============================================================================
 # Algorithm Wrappers
 # =============================================================================
 
 
-class StandardDQN(DQN):
+class StandardDQN(PersistentExplorationMixin,DQN):
     """
     Standard DQN — Mnih et al. (2015).
 
@@ -262,7 +365,7 @@ class StandardDQN(DQN):
         self.logger.record("train/grad_norm", np.mean(grad_norms))
 
 
-class DoubleDQN(DQN):
+class DoubleDQN(PersistentExplorationMixin,DQN):
     """
     Double DQN — van Hasselt, Guez & Silver (2016).
 
@@ -503,6 +606,8 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         effective_learning_starts = config["learning_starts"]
 
 
+    # --- Exploration persistence --------------------------------------------
+    persistence_mean = float(config.get("exploration_persistence_mean", 1.0))
     # --- Learning-rate schedule ---------------------------------------------
     # A constant LR for the full 20M-step run leaves nothing to damp late-
     # training oscillation (visible as persistent, non-decaying spikes in
@@ -533,6 +638,7 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         exploration_initial_eps=config["exploration_initial_eps"],
         exploration_final_eps=config["exploration_final_eps"],
         max_grad_norm=config["max_grad_norm"],
+        persistence_mean=persistence_mean,
         # Store next_obs implicitly (as a view into the obs ring buffer)
         # instead of duplicating every frame-stacked observation. This
         # roughly halves replay-buffer RAM usage, which is what lets us
@@ -576,6 +682,7 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         f"  Buffer    : {config['buffer_size']:,}  (~{est_buffer_gb:.1f} GB RAM)\n"
         f"  Expl frac : {effective_exploration_fraction}\n"
         f"  Learn strt: {effective_learning_starts:,}\n"
+        f"  Persistence: {persistence_mean:.1f} steps (mean hold)\n"
         f"  TBlog     : {tb_log_dir}\n"
         f"{override_note}"
         f"{'=' * 60}\n"

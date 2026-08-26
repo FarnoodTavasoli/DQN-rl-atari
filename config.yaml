@@ -87,7 +87,12 @@ max_grad_norm: 10.0               # Gradient clipping threshold
 exploration_fraction: 0.1        # Decay ε over the first 15% of steps
 exploration_initial_eps: 1.0      # Starting ε (fully random)
 exploration_final_eps: 0.01       # Final ε (nearly greedy)
-
+exploration_persistence_mean: 7.0  # Mean consecutive exploratory steps a random
+                                    # action is held for (PersistentExplorationMixin
+                                    # in agent.py). 1.0 = original per-step-independent
+                                    # epsilon-greedy. Try 6-10 to test whether sustained
+                                    # random actions help discover ladder-climbing
+                                    # (DonkeyKong) or fork-holding (Riverraid).
 # ---------------------------------------------------------------------------
 # Training Budget
 # ---------------------------------------------------------------------------
