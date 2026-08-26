@@ -211,7 +211,7 @@ def make_atari_env(
     n_envs: int = 1,
     seed: int = 42,
     frame_stack: int = 4,
-    reward_clip_mode: str = "sign",   # NEW: "sign" | "scaled_log" | "none"
+    reward_clip_mode: str = "sign",   #"sign" | "scaled_log" | "none"
 ) -> VecTransposeImage:
     """
     Build a vectorised, frame-stacked Atari training environment.
