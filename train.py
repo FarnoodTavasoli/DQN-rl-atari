@@ -256,6 +256,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # --- Auto-Confirmation for automated runs ------------------------------------------------
+    parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the interactive confirmation prompt (for scripted/automated runs).",
+    )
+
     return parser
 
 
@@ -280,6 +288,28 @@ def merge_config_with_args(
     overrides = {k: v for k, v in vars(args).items() if k != "config" and v is not None}
     config.update(overrides)
     return config
+
+def confirm_to_proceed(prompt: str = "Proceed with this configuration? [y/N]: ") -> bool:
+    """
+    Ask the user to confirm the effective configuration before any
+    environment or agent construction begins.
+
+    Accepts 'y' or 'yes' (case-insensitive, surrounding whitespace ignored)
+    as confirmation. Anything else -- including empty input, EOF (e.g. when
+    stdin isn't a TTY), or Ctrl-C -- cancels the run before check_cuda()'s
+    work is followed by any GPU/env allocation.
+
+    Returns
+    -------
+    bool
+        True to proceed, False to cancel.
+    """
+    try:
+        response = input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print()  # move past the unfinished prompt line
+        return False
+    return response.strip().lower() in ("y", "yes")
 
 
 # =============================================================================
@@ -635,6 +665,13 @@ if __name__ == "__main__":
     )
 
     print(f"Algorithms to train: {', '.join(algorithms)}\n")
+
+    # 4b. Confirm before any environment/agent/CUDA allocation happens
+    #     inside train(). Placed after every detail (config + algorithm
+    #     list) is printed so there's nothing left to check.
+    if not args.yes and not confirm_to_proceed():
+        print("Aborted by user — no environment or agent was created.")
+        raise SystemExit(0)
 
     # 5. Train each algorithm in sequence with the same config.
     #TODO: profiler just in case
