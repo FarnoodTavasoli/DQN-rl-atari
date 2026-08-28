@@ -71,13 +71,11 @@ gamma: 0.99                        # Discount factor γ (standard Atari value; 0
                                    # too high and causes training instability)
 tau: 1.0                          # Target-network update coefficient (1.0 = hard copy)
 target_update_interval: 10000      # Steps between target-network syncs
-train_freq: 4                     # Gradient update after every VecEnv.step() call,
-                                   # i.e. every n_envs (=8) collected transitions
-gradient_steps: 1                 # Gradient updates executed per train() call.
-                                   # With n_envs=8: 4 updates / 8 transitions = 0.5
-                                   # update ratio, double the original single-env
-                                   # 1 update / 4 transitions = 0.25 ratio, so the GPU
-                                   # does proportionally more work as data arrives faster.
+train_freq: 4
+gradient_steps: 2                 # Matches n_envs=16 to preserve the same
+                                   # updates-per-transition ratio validated
+                                   # earlier (4 updates / 64 transitions).
+                                   #
 learning_starts: 50000            # Random-play warm-up steps before first update
 max_grad_norm: 10.0               # Gradient clipping threshold
 
@@ -87,7 +85,12 @@ max_grad_norm: 10.0               # Gradient clipping threshold
 exploration_fraction: 0.1        # Decay ε over the first 15% of steps
 exploration_initial_eps: 1.0      # Starting ε (fully random)
 exploration_final_eps: 0.01       # Final ε (nearly greedy)
-
+exploration_persistence_mean: 7.0  # Mean consecutive exploratory steps a random
+                                    # action is held for (PersistentExplorationMixin
+                                    # in agent.py). 1.0 = original per-step-independent
+                                    # epsilon-greedy. Try 6-10 to test whether sustained
+                                    # random actions help discover ladder-climbing
+                                    # (DonkeyKong) or fork-holding (Riverraid).
 # ---------------------------------------------------------------------------
 # Training Budget
 # ---------------------------------------------------------------------------
