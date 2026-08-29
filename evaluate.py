@@ -11,23 +11,41 @@ Usage examples
 --------------
 # Evaluate a saved DQN model (5 episodes, print stats):
     python evaluate.py \\
-        --model_path checkpoints/ALE-Breakout-v5/DQN/DQN_final.zip \\
+        --model_path checkpoints/ALE-Breakout-v5/DQN/001/DQN_final.zip \\
         --algorithm DQN \\
         --env_id ALE/Breakout-v5
 
-# Evaluate DoubleDQN and record a video:
+# Evaluate and record video — saved automatically next to the model:
+#   → checkpoints/ALE-Breakout-v5/DoubleDQN/002/videos/
     python evaluate.py \\
-        --model_path checkpoints/ALE-Breakout-v5/DoubleDQN/DoubleDQN_final.zip \\
+        --model_path checkpoints/ALE-Breakout-v5/DoubleDQN/002/DoubleDQN_final.zip \\
         --algorithm DoubleDQN \\
         --env_id ALE/Breakout-v5 \\
+        --record_video
+
+# Best model lives one folder deeper; video is saved one level up from *_best/:
+#   → checkpoints/ALE-Pong-v5/DoubleDQN/002/videos/
+    python evaluate.py \\
+        --model_path checkpoints/ALE-Pong-v5/DoubleDQN/002/DoubleDQN_best/best_model.zip \\
+        --algorithm DoubleDQN \\
+        --env_id ALE/Pong-v5 \\
+        --record_video
+
+# Override the video output directory explicitly:
+    python evaluate.py \\
+        --model_path checkpoints/ALE-Pong-v5/DoubleDQN/002/DoubleDQN_best/best_model.zip \\
+        --algorithm DoubleDQN \\
+        --env_id ALE/Pong-v5 \\
         --record_video \\
-        --video_dir videos/DoubleDQN
+        --video_dir videos/DoubleDQN \\
+        --n_episodes 10 \\
+        --video_length 120000
 
 # Compare all three algorithms by calling this script three times and piping
 # stdout to a text file:
     for algo in DQN DoubleDQN DuelingDQN; do
         python evaluate.py --algorithm $algo \\
-            --model_path checkpoints/ALE-Breakout-v5/$algo/${algo}_final.zip \\
+            --model_path checkpoints/ALE-Breakout-v5/$algo/001/${algo}_final.zip \\
             --env_id ALE/Breakout-v5 >> results.txt
     done
 """
@@ -35,7 +53,6 @@ Usage examples
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -192,9 +209,59 @@ def run_evaluation(
 # =============================================================================
 
 
+def _resolve_video_dir(model_path: str, video_dir_arg: Optional[str]) -> Path:
+    """
+    Determine where to save the recorded video.
+
+    * If ``--video_dir`` was supplied explicitly, use that path as-is.
+    * Otherwise place a ``videos/`` folder next to the model file.  When the
+      model lives inside a ``*_best/`` subdirectory (EvalCallback layout),
+      step one level up first so the folder ends up alongside the numbered
+      run directory rather than buried inside ``*_best/``.
+
+    Examples
+    --------
+    ``checkpoints/ALE-Pong-v5/DQN/001/DQN_final.zip``
+        → ``checkpoints/ALE-Pong-v5/DQN/001/videos/``
+
+    ``checkpoints/ALE-Pong-v5/DoubleDQN/002/DoubleDQN_best/best_model.zip``
+        → ``checkpoints/ALE-Pong-v5/DoubleDQN/002/videos/``
+    """
+    if video_dir_arg is not None:
+        return Path(video_dir_arg)
+
+    parent = Path(model_path).resolve().parent
+    # EvalCallback saves best_model.zip inside an <algo>_best/ subfolder.
+    # Step up one level so videos land in the numbered run folder instead.
+    if parent.name.endswith("_best"):
+        parent = parent.parent
+    return parent / "videos"
+
+
+def _unique_name_prefix(video_dir: Path, name_prefix: str, video_length: int) -> str:
+    """
+    Return *name_prefix*, appending ``_2``, ``_3``, … if a file with the
+    expected VecVideoRecorder filename already exists in *video_dir*.
+
+    VecVideoRecorder always names files:
+        ``{name_prefix}-step-0-to-step-{video_length}.mp4``
+    so the collision check is fully deterministic before recording starts.
+    """
+    def _expected(prefix: str) -> Path:
+        return video_dir / f"{prefix}-step-0-to-step-{video_length}.mp4"
+
+    if not _expected(name_prefix).exists():
+        return name_prefix
+
+    n = 2
+    while _expected(f"{name_prefix}_{n}").exists():
+        n += 1
+    return f"{name_prefix}_{n}"
+
+
 def wrap_with_video_recorder(
     env,
-    video_dir: str,
+    video_dir: Path,
     algorithm: str,
     env_id: str,
     model_path: str,
@@ -207,11 +274,15 @@ def wrap_with_video_recorder(
     ``video_length`` steps.  For Atari with 4-frame skip, 18 000 steps
     corresponds to roughly 5 minutes of gameplay.
 
+    If a video with the same name already exists in *video_dir*, a numeric
+    suffix (``_2``, ``_3``, …) is appended to the filename prefix so existing
+    recordings are never overwritten.
+
     Parameters
     ----------
     env : VecEnv
         The evaluation environment to wrap.
-    video_dir : str
+    video_dir : Path
         Directory where the ``*.mp4`` file will be written.
     algorithm : str
         Used for the video filename prefix.
@@ -227,19 +298,23 @@ def wrap_with_video_recorder(
     VecVideoRecorder
         Wrapped environment that automatically saves the video on ``close()``.
     """
-    os.makedirs(video_dir, exist_ok=True)
+    video_dir.mkdir(parents=True, exist_ok=True)
     safe_env_id = env_id.replace("/", "-").replace(":", "_")
     model_stem = Path(model_path).stem
-    name_prefix = f"{algorithm}_{safe_env_id}_{model_stem}"
+    base_prefix = f"{algorithm}_{safe_env_id}_{model_stem}"
+    name_prefix = _unique_name_prefix(video_dir, base_prefix, video_length)
+
+    if name_prefix != base_prefix:
+        print(f"Video name collision detected — using suffix: '{name_prefix}'")
 
     recorder = VecVideoRecorder(
         venv=env,
-        video_folder=video_dir,
+        video_folder=str(video_dir),
         record_video_trigger=lambda step: step == 0,  # Start at the very first step
         video_length=video_length,
         name_prefix=name_prefix,
     )
-    print(f"Recording video → {video_dir}/{name_prefix}-*.mp4")
+    print(f"Recording video → {video_dir / name_prefix}-step-0-to-step-{video_length}.mp4")
     return recorder
 
 
@@ -354,8 +429,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--video_dir",
         type=str,
-        default="videos",
-        help="Directory where the recorded MP4 will be saved.",
+        default=None,
+        help=(
+            "Directory where the recorded MP4 will be saved. "
+            "Defaults to a 'videos/' folder next to the model file "
+            "(one level above *_best/ for best-model checkpoints)."
+        ),
     )
     parser.add_argument(
         "--video_length",
@@ -401,9 +480,10 @@ def main() -> None:
 
     # ---- Optionally wrap with video recorder ------------------------------
     if args.record_video:
+        video_dir = _resolve_video_dir(args.model_path, args.video_dir)
         env = wrap_with_video_recorder(
             env=env,
-            video_dir=args.video_dir,
+            video_dir=video_dir,
             algorithm=args.algorithm,
             env_id=args.env_id,
             model_path=args.model_path,
