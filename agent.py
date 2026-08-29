@@ -307,14 +307,21 @@ class StandardDQN(PersistentExplorationMixin,DQN):
                 batch_size, env=self._vec_normalize_env
             )
 
-            with th.no_grad():
-                # Vanilla DQN: target network both selects and evaluates
-                next_q_target = self.q_net_target(replay_data.next_observations)
-                next_q_values = next_q_target.max(dim=1, keepdim=True).values
-                target_q_values = (
-                    replay_data.rewards
-                    + (1 - replay_data.dones) * self.gamma * next_q_values
-                )
+                        with th.no_grad():
+                            # For n-step replay (n_steps > 1), discounts = gamma ** actual_n,
+                            # already adjusted by NStepReplayBuffer for early episode
+                            # termination within the window. For ordinary 1-step replay,
+                            # discounts is None and we fall back to the plain per-step gamma
+                            # -- same fallback SB3's own DQN.train() uses, so n_steps=1
+                            # (the default) reproduces current behavior exactly.
+                            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+                            # Vanilla DQN: target network both selects and evaluates
+                            next_q_target = self.q_net_target(replay_data.next_observations)
+                            next_q_values = next_q_target.max(dim=1, keepdim=True).values
+                            target_q_values = (
+                                replay_data.rewards
+                                + (1 - replay_data.dones) * discounts * next_q_values
+                            )
 
             # All Q-values for the current obs (needed for max-Q statistic)
             all_current_q = self.q_net(replay_data.observations)
@@ -388,6 +395,7 @@ class DoubleDQN(PersistentExplorationMixin,DQN):
             )
 
             with th.no_grad():
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
                 # ---- DOUBLE DQN TARGET COMPUTATION -------------------------
                 # Step 1 — Online network selects the greedy action for s'
                 #           (decouples selection from evaluation)
@@ -402,7 +410,7 @@ class DoubleDQN(PersistentExplorationMixin,DQN):
                 # 1-step TD target  y = r + γ(1 − done) · Q_target(s', a*)
                 target_q_values = (
                     replay_data.rewards
-                    + (1 - replay_data.dones) * self.gamma * next_q_values
+                    + (1 - replay_data.dones) * discounts * next_q_values
                 )
 
             # ---- Current Q-values for the actions taken --------------------
@@ -604,6 +612,14 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
     else:
         learning_rate = base_lr
 
+    # --- N-step returns -------------------------------------------------
+    n_steps = int(config.get("n_steps", 1))
+    if n_steps > 1 and config.get("optimize_memory_usage", True):
+        raise ValueError(
+            f"n_steps={n_steps} requires optimize_memory_usage: false in config.yaml "
+            "-- NStepReplayBuffer does not support the memory-optimized buffer layout."
+        )
+
     agent = AlgorithmClass(
         policy=policy_arg,
         env=env,
@@ -622,6 +638,7 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         exploration_final_eps=config["exploration_final_eps"],
         max_grad_norm=config["max_grad_norm"],
         persistence_mean=persistence_mean,
+        n_steps=n_steps,
         # Store next_obs implicitly (as a view into the obs ring buffer)
         # instead of duplicating every frame-stacked observation. This
         # roughly halves replay-buffer RAM usage, which is what lets us
@@ -666,6 +683,7 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         f"  Expl frac : {effective_exploration_fraction}\n"
         f"  Learn strt: {effective_learning_starts:,}\n"
         f"  Persistence: {persistence_mean:.1f} steps (mean hold)\n"
+        f"  N-steps   : {n_steps}\n"
         f"  TBlog     : {tb_log_dir}\n"
         f"{override_note}"
         f"{'=' * 60}\n"

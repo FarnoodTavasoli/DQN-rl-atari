@@ -91,6 +91,15 @@ exploration_persistence_mean: 7.0  # Mean consecutive exploratory steps a random
                                     # epsilon-greedy. Try 6-10 to test whether sustained
                                     # random actions help discover ladder-climbing
                                     # (DonkeyKong) or fork-holding (Riverraid).
+n_steps: 1                          # >1 enables n-step returns (SB3's built-in NStepReplayBuffer, v2.7.0+).
+                                    # Backs up the TD target over n consecutive env steps instead of 1,
+                                    # letting a good trajectory's reward propagate through the value
+                                    # function in one update instead of needing n sequential 1-step
+                                    # bootstraps -- directly useful once persistent exploration starts
+                                    # finding good rollouts (ladder climbs, held lanes at forks) that
+                                    # currently need many updates to get credited. Requires
+                                    # optimize_memory_usage: false. Typical values: 3-5.
+optimize_memory_usage: false
 # ---------------------------------------------------------------------------
 # Training Budget
 # ---------------------------------------------------------------------------
