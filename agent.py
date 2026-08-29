@@ -49,7 +49,7 @@ import torch.nn.functional as F
 from gymnasium import spaces
 from stable_baselines3 import DQN
 from stable_baselines3.common.type_aliases import GymEnv
-from stable_baselines3.common.utils import get_linear_fn
+from stable_baselines3.common.utils import LinearSchedule
 from stable_baselines3.dqn.policies import CnnPolicy, QNetwork
 from torch import nn
 
@@ -599,7 +599,8 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
     # policy into a worse basin near the end of training.
     base_lr = config["learning_rate"]
     if config.get("lr_schedule", "constant") == "linear":
-        learning_rate = get_linear_fn(base_lr, base_lr * 0.1, 1.0)
+        # signature -- anneals base_lr -> 10% of itself over the full run.
+        learning_rate = LinearSchedule(base_lr, base_lr * 0.1, 1.0)
     else:
         learning_rate = base_lr
 

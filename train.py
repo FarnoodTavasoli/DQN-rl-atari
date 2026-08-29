@@ -514,11 +514,15 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
                 break
         return " → ".join(names)
 
-    print(f"Training env wrapper chain:\n  {_wrapper_chain(train_env)}")
-    if "ForceFireOnLifeLoss" in _wrapper_chain(train_env):
-        print("  ✓ ForceFireOnLifeLoss is active")
-    else:
-        print("  ✗ ForceFireOnLifeLoss NOT found — check environment.py")
+    train_chain = _wrapper_chain(train_env)
+    print(f"Training env wrapper chain:\n  {train_chain}")
+    # NOTE: ForceFireOnLifeLoss is intentionally NEVER part of the training
+    # chain (see the NOTE comment in environment.py's make_atari_env) --
+    # replacing the policy's chosen action inside step() would corrupt the
+    # replay buffer SB3 is simultaneously writing to. Training instead
+    # relies on EpisodicLifeEnv's reset-on-life-loss cycle to trigger
+    # FireResetEnv naturally. The wrapper belongs only in the eval chain,
+    # verified below.
 
     print("Building evaluation environment …")
     eval_env = make_eval_env(
@@ -526,7 +530,15 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         seed=config["seed"] + 100,  # Different seed from training
         frame_stack=config["frame_stack"],
     )
-    print(f"Eval env wrapper chain:\n  {_wrapper_chain(eval_env)}")
+    eval_chain = _wrapper_chain(eval_env)
+    print(f"Eval env wrapper chain:\n  {eval_chain}")
+    if "FireResetEnv" in eval_chain:
+        if "ForceFireOnLifeLoss" in eval_chain:
+            print("  ✓ ForceFireOnLifeLoss is active (fire-start game)")
+        else:
+            print("  ✗ ForceFireOnLifeLoss NOT found on a fire-start game — check environment.py")
+    else:
+        print("  – Game does not require FIRE-to-start; ForceFireOnLifeLoss correctly not applied")
 
     # ---- Config snapshot ---------------------------------------------------
     # Write before the agent is built so the file exists even if training
