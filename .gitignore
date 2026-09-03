@@ -4,3 +4,4 @@ checkpoints/
 .venv/
 videos/
 training.log
+temp.md

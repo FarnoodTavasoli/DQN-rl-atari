@@ -307,21 +307,21 @@ class StandardDQN(PersistentExplorationMixin,DQN):
                 batch_size, env=self._vec_normalize_env
             )
 
-                        with th.no_grad():
-                            # For n-step replay (n_steps > 1), discounts = gamma ** actual_n,
-                            # already adjusted by NStepReplayBuffer for early episode
-                            # termination within the window. For ordinary 1-step replay,
-                            # discounts is None and we fall back to the plain per-step gamma
-                            # -- same fallback SB3's own DQN.train() uses, so n_steps=1
-                            # (the default) reproduces current behavior exactly.
-                            discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
-                            # Vanilla DQN: target network both selects and evaluates
-                            next_q_target = self.q_net_target(replay_data.next_observations)
-                            next_q_values = next_q_target.max(dim=1, keepdim=True).values
-                            target_q_values = (
-                                replay_data.rewards
-                                + (1 - replay_data.dones) * discounts * next_q_values
-                            )
+            with th.no_grad():
+                # For n-step replay (n_steps > 1), discounts = gamma ** actual_n,
+                # already adjusted by NStepReplayBuffer for early episode
+                # termination within the window. For ordinary 1-step replay,
+                # discounts is None and we fall back to the plain per-step gamma
+                # -- same fallback SB3's own DQN.train() uses, so n_steps=1
+                # (the default) reproduces current behavior exactly.
+                discounts = replay_data.discounts if replay_data.discounts is not None else self.gamma
+                # Vanilla DQN: target network both selects and evaluates
+                next_q_target = self.q_net_target(replay_data.next_observations)
+                next_q_values = next_q_target.max(dim=1, keepdim=True).values
+                target_q_values = (
+                    replay_data.rewards
+                    + (1 - replay_data.dones) * discounts * next_q_values
+                )
 
             # All Q-values for the current obs (needed for max-Q statistic)
             all_current_q = self.q_net(replay_data.observations)
@@ -588,12 +588,19 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
     # Fix: keep epsilon high long enough that the buffer always contains
     # enough non-NOOP transitions to let the advantage stream differentiate
     # actions, and warm-start the buffer with more random data.
+    requested_exploration_fraction = config["exploration_fraction"]
     if algorithm_name == "DuelingDQN":
-        effective_exploration_fraction = max(config["exploration_fraction"], 0.30)
+        effective_exploration_fraction = max(config["exploration_fraction"], 0.25)
         effective_learning_starts = max(config["learning_starts"], 50_000)
+        # Write the effective values back into config so downstream logging
+        # (config.md, TensorBoard hparams) reflects what was actually trained
+        # with, not the raw config.yaml value that DuelingDQN silently overrides.
+        config["exploration_fraction"] = effective_exploration_fraction
+        config["learning_starts"] = effective_learning_starts
     else:
         effective_exploration_fraction = config["exploration_fraction"]
         effective_learning_starts = config["learning_starts"]
+
 
 
     # --- Exploration persistence --------------------------------------------
@@ -661,12 +668,12 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
     )
 
     est_buffer_gb = (config["buffer_size"] * (28224 if config.get("optimize_memory_usage", True) else 56448)) / 1024 ** 3
-
+    requested_learning_starts = config["learning_starts"]
     override_note = (
         "  (* exploration and learning_starts overridden for DuelingDQN)\n"
         if algorithm_name == "DuelingDQN" and (
-            effective_exploration_fraction != config["exploration_fraction"]
-            or effective_learning_starts != config["learning_starts"]
+            effective_exploration_fraction != requested_exploration_fraction
+            or effective_learning_starts != requested_learning_starts
         )
         else ""
     )

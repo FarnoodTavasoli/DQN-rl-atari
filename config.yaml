@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-env_id: "ALE/Breakout-v5"        # Any ALE/gymnasium Atari environment ID
+env_id: "ALE/Freeway-v5"        # Any ALE/gymnasium Atari environment ID
 n_envs: 16                         # Parallel environments, run via SubprocVecEnv
                                    # (one OS process each). Tuned for a ~12-core CPU:
                                    # keeps the GPU fed with fresh transitions instead
@@ -17,6 +17,15 @@ n_envs: 16                         # Parallel environments, run via SubprocVecEn
                                    # of history even at this collection rate.
 frame_stack: 4                    # Consecutive frames stacked as one observation
 seed: 42                          # Global random seed for reproducibility
+n_eval_episodes: 22   # Episodes averaged per EvalCallback evaluation during
+                       # training, used to pick best_model.zip. Higher = less
+                       # noisy best-checkpoint selection, at the cost of more
+                       # wall-clock time spent evaluating instead of training
+                       # (eval_freq below is already reduced 5x specifically
+                       # to keep total eval time bounded -- see bug #5 in
+                       # project history). Try 25-30 for games with high
+                       # per-episode score variance (e.g. Space Invaders).
+
 
 # ---------------------------------------------------------------------------
 # Core Hyperparameters  (DeepMind Nature DQN defaults as baseline)
@@ -42,11 +51,11 @@ seed: 42                          # Global random seed for reproducibility
 # optimizer (e.g. eps, alpha, momentum, weight_decay).
 optimizer: "adam"
 optimizer_kwargs: {eps : 1.5e-4}              # e.g. {eps: 1.5e-4} to override Adam eps
-reward_clip_mode: "scaled_log"    # "sign" (original clip) | "scaled_log" | "none"
+reward_clip_mode: "sign"    # "sign" (original clip) | "scaled_log" | "none"
 
-lr_schedule: "linear"             # "linear" anneals learning_rate → 10% of itself over training;
+lr_schedule: "constant"             # "linear" anneals learning_rate → 10% of itself over training;
                                   # "constant" keeps the old flat-LR behavior
-learning_rate: 2.5e-4             # Learning rate passed to the optimizer
+learning_rate: 1.0e-4             # Learning rate passed to the optimizer
 batch_size: 32                    # Mini-batch size drawn from replay buffer.
                                    # Bumped from 32 → 128: a GTX 1650 barely notices
                                    # the extra compute for a small NatureCNN, so a
@@ -76,35 +85,33 @@ gradient_steps: 2                 # Matches n_envs=16 to preserve the same
                                    # updates-per-transition ratio validated
                                    # earlier (4 updates / 64 transitions).
                                    #
-learning_starts: 50000            # Random-play warm-up steps before first update
+learning_starts: 85000            # Random-play warm-up steps before first update
 max_grad_norm: 10.0               # Gradient clipping threshold
 
 # ---------------------------------------------------------------------------
 # Exploration Schedule  (linear ε-greedy annealing)
 # ---------------------------------------------------------------------------
-exploration_fraction: 0.1        # Decay ε over the first 15% of steps
+exploration_fraction: 0.35        # Decay ε over the first 15% of steps
 exploration_initial_eps: 1.0      # Starting ε (fully random)
-exploration_final_eps: 0.01       # Final ε (nearly greedy)
-exploration_persistence_mean: 7.0  # Mean consecutive exploratory steps a random
+exploration_final_eps: 0.02       # Final ε (nearly greedy)
+exploration_persistence_mean: 3.0  # Mean consecutive exploratory steps a random
                                     # action is held for (PersistentExplorationMixin
                                     # in agent.py). 1.0 = original per-step-independent
                                     # epsilon-greedy. Try 6-10 to test whether sustained
                                     # random actions help discover ladder-climbing
                                     # (DonkeyKong) or fork-holding (Riverraid).
-n_steps: 1                          # >1 enables n-step returns (SB3's built-in NStepReplayBuffer, v2.7.0+).
+n_steps: 4                          # >1 enables n-step returns (SB3's built-in NStepReplayBuffer, v2.7.0+).
                                     # Backs up the TD target over n consecutive env steps instead of 1,
                                     # letting a good trajectory's reward propagate through the value
                                     # function in one update instead of needing n sequential 1-step
                                     # bootstraps -- directly useful once persistent exploration starts
                                     # finding good rollouts (ladder climbs, held lanes at forks) that
                                     # currently need many updates to get credited. Requires
-                                    # optimize_memory_usage: false. Typical values: 3-5.
-optimize_memory_usage: false
 # ---------------------------------------------------------------------------
 # Training Budget
 # ---------------------------------------------------------------------------
-total_timesteps: 15000000           # 1 million steps — ~1 h per algorithm on GTX 1650
-checkpoint_interval: 50000000        # Save model weights every 50k steps
+total_timesteps: 30000000           # 1 million steps — ~1 h per algorithm on GTX 1650
+checkpoint_interval: 5000000        # Save model weights every 50k steps
 
 # ---------------------------------------------------------------------------
 # Paths

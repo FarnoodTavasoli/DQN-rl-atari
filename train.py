@@ -13,8 +13,11 @@ Usage examples
 # Override algorithm and environment from the command line:
     python train.py --algorithm DoubleDQN --env_id ALE/Pong-v5
 
-# Resume a previous run from the latest checkpoint:
-    python train.py --algorithm DQN --resume checkpoints/ALE-Breakout-v5/DQN/001/DQN_step_500000_steps.zip
+# Resume a previous run from the latest checkpoint. The run's own saved
+# checkpoints/<env>/<algo>/<run>/config.yaml is loaded automatically instead
+# of the top-level config.yaml, so the resumed run keeps the exact
+# hyperparameters it started with (CLI flags still override on top of it):
+    python train.py --resume checkpoints/ALE-Breakout-v5/DQN/001/DQN_step_500000_steps.zip
 
 # Quick smoke-test (2 M steps, small buffer):
     python train.py --total_timesteps 2000000 --buffer_size 50000
@@ -116,28 +119,78 @@ def _next_run_number(algo_dir: Path) -> str:
     return f"{max(existing, default=0) + 1:03d}"
 
 
-def _write_config_md(run_dir: Path, config: Dict[str, Any], run_num: str) -> None:
+def _write_run_config(run_dir: Path, config: Dict[str, Any], run_num: str) -> None:
     """
-    Write a human-readable Markdown snapshot of *config* to
-    ``<run_dir>/config.md`` so each run is self-documenting.
+    Write a YAML snapshot of *config* to ``<run_dir>/config.yaml`` so each
+    run is self-documenting *and* reloadable.
+
+    This replaces the old Markdown-only snapshot (``config.md``): YAML is
+    just as human-readable, but — unlike Markdown — it can also be parsed
+    straight back into a dict.  ``--resume`` uses this file (see
+    ``load_run_config()``) to continue a run with the exact hyperparameters
+    it started with, instead of silently picking up whatever currently
+    lives in the project's top-level ``config.yaml``.
+
+    Internal/derived keys (prefixed with ``_``, e.g. ``_tb_log_dir``) are
+    excluded since they are recomputed from ``run_dir`` on every load and
+    would otherwise go stale if the checkpoint tree is ever moved.
     """
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _SKIP = {"log_dir", "checkpoint_dir", "video_dir", "_tb_log_dir"}
-    lines = [
-        f"# Run {run_num} — {config['algorithm']} on {config['env_id']}",
-        "",
-        f"**Trained:** {ts}  ",
-        f"**Run folder:** `{run_dir}`  ",
-        "",
-        "## Hyperparameters",
-        "",
-        "| Parameter | Value |",
-        "|:----------|:------|",
-    ]
-    for k, v in config.items():
-        if k not in _SKIP:
-            lines.append(f"| `{k}` | `{v}` |")
-    (run_dir / "config.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    snapshot = {k: v for k, v in config.items() if not k.startswith("_")}
+    # Metadata for humans skimming the file; harmless extra keys on reload
+    # since merge_config_with_args only ever adds non-None CLI overrides
+    # on top, and train() never reads these two back out.
+    snapshot["_run_number"] = run_num
+    snapshot["_trained_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with (run_dir / "config.yaml").open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(snapshot, fh, default_flow_style=False, sort_keys=False)
+
+
+def load_run_config(run_dir: Path) -> Optional[Dict[str, Any]]:
+    """
+    Load the YAML config snapshot saved by ``_write_run_config()`` at the
+    start of a run.
+
+    Parameters
+    ----------
+    run_dir : Path
+        The numbered run directory (e.g. ``checkpoints/ALE-Breakout-v5/DQN/001``).
+
+    Returns
+    -------
+    dict | None
+        The saved config, or ``None`` if no ``config.yaml`` snapshot exists
+        in *run_dir* (e.g. a legacy run that only wrote ``config.md``, or a
+        ``--resume`` path that doesn't point inside a recognised run
+        directory). Callers should fall back to the top-level config.yaml
+        in that case.
+    """
+    run_config_path = run_dir / "config.yaml"
+    if not run_config_path.is_file():
+        return None
+    with run_config_path.open("r") as fh:
+        saved = yaml.safe_load(fh)
+    # Drop the "_run_number"/"_trained_at" bookkeeping keys written by
+    # _write_run_config — they're for humans reading the file, not for
+    # feeding back into train()/create_agent().
+    return {k: v for k, v in saved.items() if not k.startswith("_")}
+
+
+def _resolve_run_dir_from_checkpoint(resume_path: str) -> Path:
+    """
+    Return the numbered run directory that contains *resume_path*.
+
+    Mirrors the ``*_best/`` handling in ``evaluate.py``'s
+    ``_resolve_video_dir()``: ``EvalCallback`` saves ``best_model.zip``
+    inside an ``<algo>_best/`` subfolder, so when *resume_path* lives there
+    we step up one level to land on the numbered run directory (where
+    ``config.yaml`` and the regular step checkpoints live) rather than the
+    ``*_best/`` subfolder itself.
+    """
+    parent = Path(resume_path).resolve().parent
+    if parent.name.endswith("_best"):
+        parent = parent.parent
+    return parent
 
 
 # =============================================================================
@@ -545,7 +598,6 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
     # crashes during environment / model construction.
     if not resume_path:  # Don't overwrite the original config on resume
         config["_tb_log_dir"] = str(run_dir / "tb_logs")
-        _write_config_md(run_dir, config, run_num)
         print(f"Run {run_num} → {run_dir}")
     else:
         config["_tb_log_dir"] = str(run_dir / "tb_logs")
@@ -575,6 +627,8 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         agent = create_agent(config, train_env)
         remaining_steps = config["total_timesteps"]
         reset_timesteps = True
+        _write_run_config(run_dir, config, run_num)
+
 
     # ---- Callbacks ---------------------------------------------------------
     # 1. Checkpoint: save model weights every N steps to guard against crashes.
@@ -595,7 +649,7 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
         best_model_save_path=best_model_path,
         log_path=str(checkpoint_dir / "eval_logs"),
         eval_freq=max(200_000 // config["n_envs"], 1),
-        n_eval_episodes=15,
+        n_eval_episodes=config.get("n_eval_episodes", 15),
         deterministic=True,
         render=False,
         verbose=1,
@@ -659,8 +713,31 @@ if __name__ == "__main__":
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    # 3. Load and merge config
-    config = load_config(args.config)
+    # 3. Load config.
+    #    --resume reuses the checkpoint's OWN run directory config.yaml
+    #    (written by _write_run_config at the start of that run) instead of
+    #    the top-level --config file, so a resumed run keeps the exact
+    #    hyperparameters it started with even if config.yaml has since
+    #    changed. CLI flags are still applied on top as overrides. Falls
+    #    back to --config with a warning for legacy runs that only saved
+    #    the old config.md (no machine-readable snapshot to load).
+    if args.resume:
+        resume_run_dir = _resolve_run_dir_from_checkpoint(args.resume)
+        run_config = load_run_config(resume_run_dir)
+        if run_config is not None:
+            print(f"Resuming: loaded saved config from {resume_run_dir / 'config.yaml'}")
+            config = run_config
+        else:
+            print(
+                f"WARNING: no config.yaml snapshot found in '{resume_run_dir}' "
+                f"(legacy run?). Falling back to '{args.config}' — "
+                "hyperparameters may not match the original run."
+            )
+            config = load_config(args.config)
+    else:
+        config = load_config(args.config)
+
+    # 3b. Merge CLI overrides on top of whichever config was loaded above.
     config = merge_config_with_args(config, args)
 
     print("\nEffective configuration:")
@@ -669,12 +746,18 @@ if __name__ == "__main__":
     print()
 
     # 4. Determine which algorithms to train.
-    #    --algorithm trains only that one; omitting it trains all three.
-    algorithms = (
-        [args.algorithm]
-        if args.algorithm is not None
-        else ["DQN", "DoubleDQN", "DuelingDQN"]
-    )
+    #    --algorithm trains only that one; omitting it trains all three for
+    #    a fresh run. On --resume there is exactly one checkpoint to resume,
+    #    so default to the algorithm recorded in the resumed run's config
+    #    instead of re-training all three from scratch.
+    if args.resume:
+        algorithms = [args.algorithm] if args.algorithm is not None else [config["algorithm"]]
+    else:
+        algorithms = (
+            [args.algorithm]
+            if args.algorithm is not None
+            else ["DQN", "DoubleDQN", "DuelingDQN"]
+        )
 
     print(f"Algorithms to train: {', '.join(algorithms)}\n")
 
