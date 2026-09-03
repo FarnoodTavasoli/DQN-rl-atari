@@ -515,13 +515,24 @@ def train(config: Dict[str, Any], resume_path: Optional[str] = None) -> None:
     # When resuming, reuse the existing numbered run directory so all
     # checkpoints from a resumed run stay together.  For new runs, mint
     # the next available number (001, 002, …).
+    #
+    # _resolve_run_dir_from_checkpoint() steps past an EvalCallback
+    # "<algo>_best/" subfolder (best_model.zip lives one level deeper than
+    # the numbered run dir) — using it here (instead of a separate, looser
+    # check) keeps this in sync with how --resume's config.yaml lookup
+    # resolves the run dir in __main__, so resuming from best_model.zip
+    # continues in the original run dir instead of silently minting a new
+    # one.
     if resume_path:
-        _resume_parent = Path(resume_path).resolve().parent
-        if _resume_parent.name.isdigit() and _resume_parent.parent == algo_dir.resolve():
-            run_dir = _resume_parent
-        # Also accept the run dir itself being passed as resume_path
-        elif Path(resume_path).resolve().name.isdigit() and Path(resume_path).resolve().parent == algo_dir.resolve():
-            run_dir = Path(resume_path).resolve()
+        _resume_target = Path(resume_path).resolve()
+        if _resume_target.is_dir() and _resume_target.name.isdigit():
+            # The run directory itself was passed instead of a checkpoint file.
+            _resolved_run_dir = _resume_target
+        else:
+            _resolved_run_dir = _resolve_run_dir_from_checkpoint(resume_path)
+
+        if _resolved_run_dir.name.isdigit() and _resolved_run_dir.parent == algo_dir.resolve():
+            run_dir = _resolved_run_dir
         else:
             # Legacy path without a numbered subfolder — create a new run.
             run_dir = algo_dir / _next_run_number(algo_dir)
