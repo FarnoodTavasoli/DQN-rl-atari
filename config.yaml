@@ -109,6 +109,9 @@ n_steps: 4                          # >1 enables n-step returns (SB3's built-in 
                                     # bootstraps -- directly useful once persistent exploration starts
                                     # finding good rollouts (ladder climbs, held lanes at forks) that
                                     # currently need many updates to get credited. Requires
+exploration_action_weights:
+  UP: 4.0   # bias random exploration toward attempting climbs.
+            # Leave unset for games that don't need this.
 
 # ---------------------------------------------------------------------------
 # Training Budget

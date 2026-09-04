@@ -38,6 +38,7 @@ Architecture notes
 * DuelingDQN inherits DoubleDQN so it automatically uses the decoupled
   action-selection / action-evaluation target.
 """
+from environment import resolve_action_weights
 
 from __future__ import annotations
 
@@ -196,25 +197,49 @@ class DuelingCnnPolicy(CnnPolicy):
 
 
 class PersistentExplorationMixin:
-    def __init__(self, *args: Any, persistence_mean: float = 1.0, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        if not isinstance(self.action_space, spaces.Discrete):
-            raise TypeError(
-                "PersistentExplorationMixin only supports Discrete action "
-                f"spaces (Atari); got {type(self.action_space).__name__}."
-            )
-        self.persistence_mean = max(float(persistence_mean), 1.0)
-        self._sticky_action: Optional[np.ndarray] = None
-        self._sticky_remaining: Optional[np.ndarray] = None
-        self._sticky_reset_mask: Optional[np.ndarray] = None
+    def __init__(
+            self,
+            *args: Any,
+            persistence_mean: float = 1.0,
+            exploration_action_weights: Optional[Dict[int, float]] = None,
+            **kwargs: Any,
+        ) -> None:
+            super().__init__(*args, **kwargs)
+            if not isinstance(self.action_space, spaces.Discrete):
+                raise TypeError(
+                    "PersistentExplorationMixin only supports Discrete action "
+                    f"spaces (Atari); got {type(self.action_space).__name__}."
+                )
+            self.persistence_mean = max(float(persistence_mean), 1.0)
+            self._sticky_action: Optional[np.ndarray] = None
+            self._sticky_remaining: Optional[np.ndarray] = None
+            self._sticky_reset_mask: Optional[np.ndarray] = None
+
+            # Optional bias toward specific actions during random exploration
+            # (e.g. {"UP": 4.0} resolved to {2: 4.0} on DonkeyKong, so a random
+            # exploratory draw is ~4x more likely to be UP than any other single
+            # action). Actions not listed default to weight 1.0. None/empty
+            # reproduces exact uniform sampling -- zero behavior change for
+            # every other game/config that doesn't set this.
+            n_actions = int(self.action_space.n)
+            if exploration_action_weights:
+                weights = np.ones(n_actions, dtype=np.float64)
+                for idx, w in exploration_action_weights.items():
+                    if 0 <= idx < n_actions:
+                        weights[idx] = w
+                self._action_probs = weights / weights.sum()
+            else:
+                self._action_probs = None
 
     def _excluded_save_params(self) -> List[str]:
         return super()._excluded_save_params() + [
             "_sticky_action", "_sticky_remaining", "_sticky_reset_mask",
         ]
 
-    def _draw_random_actions(self, n: int) -> np.ndarray:
-        return np.array([self.action_space.sample() for _ in range(n)])
+      def _draw_random_actions(self, n: int) -> np.ndarray:
+            if self._action_probs is not None:
+                return np.random.choice(len(self._action_probs), size=n, p=self._action_probs)
+            return np.array([self.action_space.sample() for _ in range(n)])
 
     def _draw_hold_durations(self, n: int) -> np.ndarray:
         return np.random.geometric(1.0 / self.persistence_mean, size=n)
@@ -619,6 +644,10 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
     else:
         learning_rate = base_lr
 
+    exploration_action_weights = resolve_action_weights(
+        config["env_id"], config.get("exploration_action_weights")
+    )
+
     # --- N-step returns -------------------------------------------------
     n_steps = int(config.get("n_steps", 1))
     if n_steps > 1 and config.get("optimize_memory_usage", True):
@@ -645,6 +674,7 @@ def create_agent(config: Dict[str, Any], env: GymEnv) -> DQN:
         exploration_final_eps=config["exploration_final_eps"],
         max_grad_norm=config["max_grad_norm"],
         persistence_mean=persistence_mean,
+        exploration_action_weights=exploration_action_weights, # type: ignore[call-arg]
         n_steps=n_steps,
         # Store next_obs implicitly (as a view into the obs ring buffer)
         # instead of duplicating every frame-stacked observation. This

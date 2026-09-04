@@ -35,6 +35,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium.wrappers import TimeLimit
 
+from typing import Dict, Optional
+
 
 gym.register_envs(ale_py)  # register ALE/Atari environments
 
@@ -99,6 +101,38 @@ def _detect_fire_needed(env: gym.Env) -> bool:
         return True
     return bool(np.array_equal(obs_reset, obs_noop))
 
+def resolve_action_weights(
+    env_id: str,
+    action_name_weights: Optional[Dict[str, float]],
+) -> Optional[Dict[int, float]]:
+    """
+    Translate a {action_name: weight} dict (e.g. {"UP": 4.0}) into the
+    {action_index: weight} form PersistentExplorationMixin needs, by
+    probing the game's actual action-meaning table once -- same one-shot
+    temporary-env pattern as _detect_fire_needed(). Any action name not
+    present in this game's action set is skipped with a warning rather
+    than raising, so the same config key can be reused across games with
+    different action sets without erroring.
+    """
+    if not action_name_weights:
+        return None
+
+    probe = gym.make(env_id, render_mode="rgb_array", frameskip=1)
+    try:
+        meanings = probe.unwrapped.get_action_meanings()  # type: ignore[union-attr]
+    finally:
+        probe.close()
+
+    resolved: Dict[int, float] = {}
+    for name, weight in action_name_weights.items():
+        if name in meanings:
+            resolved[meanings.index(name)] = float(weight)
+        else:
+            print(
+                f"  WARNING: exploration_action_weights key '{name}' is not "
+                f"a valid action for this game (valid: {meanings}) -- ignored."
+            )
+    return resolved or None
 
 from stable_baselines3.common.atari_wrappers import (
     ClipRewardEnv,
