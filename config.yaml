@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-env_id: "ALE/Freeway-v5"        # Any ALE/gymnasium Atari environment ID
+env_id: "ALE/DonkeyKong-v5"        # Any ALE/gymnasium Atari environment ID
 n_envs: 16                         # Parallel environments, run via SubprocVecEnv
                                    # (one OS process each). Tuned for a ~12-core CPU:
                                    # keeps the GPU fed with fresh transitions instead
@@ -92,17 +92,17 @@ max_grad_norm: 10.0               # Gradient clipping threshold
 # ---------------------------------------------------------------------------
 # Exploration Schedule  (linear ε-greedy annealing)
 # ---------------------------------------------------------------------------
-exploration_fraction: 0.35        # Decay ε over the first 15% of steps
+exploration_fraction: 0.4        # Decay ε over the first 15% of steps
 exploration_initial_eps: 1.0      # Starting ε (fully random)
-exploration_final_eps: 0.02       # Final ε (nearly greedy)
-exploration_persistence_mean: 3.0  # Mean consecutive exploratory steps a random
+exploration_final_eps: 0.08       # Final ε (nearly greedy)
+exploration_persistence_mean: 8.0  # Mean consecutive exploratory steps a random
 
                                     # action is held for (PersistentExplorationMixin
                                     # in agent.py). 1.0 = original per-step-independent
                                     # epsilon-greedy. Try 6-10 to test whether sustained
                                     # random actions help discover ladder-climbing
                                     # (DonkeyKong) or fork-holding (Riverraid).
-n_steps: 4                          # >1 enables n-step returns (SB3's built-in NStepReplayBuffer, v2.7.0+).
+n_steps: 5                          # >1 enables n-step returns (SB3's built-in NStepReplayBuffer, v2.7.0+).
                                     # Backs up the TD target over n consecutive env steps instead of 1,
                                     # letting a good trajectory's reward propagate through the value
                                     # function in one update instead of needing n sequential 1-step

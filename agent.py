@@ -236,10 +236,10 @@ class PersistentExplorationMixin:
             "_sticky_action", "_sticky_remaining", "_sticky_reset_mask",
         ]
 
-      def _draw_random_actions(self, n: int) -> np.ndarray:
-            if self._action_probs is not None:
-                return np.random.choice(len(self._action_probs), size=n, p=self._action_probs)
-            return np.array([self.action_space.sample() for _ in range(n)])
+    def _draw_random_actions(self, n: int) -> np.ndarray:
+        if self._action_probs is not None:
+            return np.random.choice(len(self._action_probs), size=n, p=self._action_probs)
+        return np.array([self.action_space.sample() for _ in range(n)])
 
     def _draw_hold_durations(self, n: int) -> np.ndarray:
         return np.random.geometric(1.0 / self.persistence_mean, size=n)
